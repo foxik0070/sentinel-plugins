@@ -1,5 +1,5 @@
 # Sentinel Plugins
-
+![sentinel-plugins](sentinel_plugins.png)
 ![License: MIT](https://img.shields.io/badge/License-MIT-cyan.svg)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 ![Detectors](https://img.shields.io/badge/detectors-11-blue)
