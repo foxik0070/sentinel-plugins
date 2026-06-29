@@ -1,0 +1,8 @@
+# Git ignore for sentinel-plugins
+
+# Internal dev files
+CLAUDE.md
+todo.md
+resume.sh
+chyby.md
+.claude/
