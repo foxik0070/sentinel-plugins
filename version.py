@@ -5,4 +5,4 @@ v mesici, takze se **meni s kazdym commitem** — i s tim, ktery do balicku
 nic nepridava. Verze patri sem, na jedno misto.
 """
 
-VERSION = "2026.11.003"
+VERSION = "2026.11.004"

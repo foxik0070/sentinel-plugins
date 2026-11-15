@@ -1,4 +1,6 @@
+import fnmatch
 import json
+import os
 from datetime import datetime, timezone
 from sentinel import api
 from sentinel import config as _cfg_mod
@@ -7,9 +9,54 @@ def _t(key, default):
     """Číst threshold z config.yaml ha_thresholds sekce, s fallbackem na default."""
     return _cfg_mod.HA_THRESHOLDS.get(key, default)
 
+
+def _globs(key):
+    """Seznam glob vzorů z configu (ha_thresholds), prázdný když chybí."""
+    val = _t(key, []) or []
+    return [str(g).lower() for g in val] if isinstance(val, (list, tuple)) else [str(val).lower()]
+
+
+def _matches(entity_id, patterns):
+    return any(fnmatch.fnmatch(entity_id, g) for g in patterns)
+
 class Detector(api.BaseDetector):
     def __init__(self, name, config_params=None):
         super().__init__(name, config_params)
+        # Nejvyssi videna hodnota napeti podle entity. Bez ni nejde rozeznat
+        # "sit vypadla" od "senzor merí napetovou vetev desky (0-12 V)" nebo
+        # "stroj je vypnuty a hlasi 0". Obojí je 0.0 V, ale jen prvni je porucha.
+        self.volt_file = os.path.join(
+            getattr(_cfg_mod, 'LOG_DIR', '/var/log/sentinel/logs'), "ha_voltage_seen.json")
+        self.volt_seen = self._load_volt_seen()
+
+    def _load_volt_seen(self):
+        try:
+            with open(self.volt_file, 'r') as f:
+                data = json.load(f)
+            return {k: float(v) for k, v in data.items()} if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _save_volt_seen(self):
+        try:
+            with open(self.volt_file, 'w') as f:
+                json.dump(self.volt_seen, f)
+        except Exception:
+            pass
+
+    def _is_mains_voltage(self, entity_id, value):
+        """Da se u tehle entity verit, ze meri napeti v siti?
+
+        Whitelist v configu rozhoduje; jinak se verí tomu, co uz entita
+        nekdy ukazala — napetova vetev desky se nikdy nepriblizi 230 V.
+        """
+        whitelist = _globs("voltage_entities")
+        if whitelist:
+            return _matches(entity_id, whitelist)
+        floor = float(_t("voltage_mains_floor_v", 100.0))
+        if value > self.volt_seen.get(entity_id, 0.0):
+            self.volt_seen[entity_id] = value
+        return self.volt_seen.get(entity_id, 0.0) >= floor
 
     def process(self, lines, file_path):
         if not file_path.endswith("homeassistant.log") or len(lines) < 2: 
@@ -50,6 +97,10 @@ class Detector(api.BaseDetector):
             if state_val in ["unknown", "unavailable", "none", "null"]:
                 continue
             if "threshold" in entity_id:
+                continue
+            # Vlastni vyjimky z configu — aby slo podobny pripad umlcet
+            # bez zasahu do kodu.
+            if _matches(entity_id, _globs("ignore_entities")):
                 continue
             if "nas326" in entity_id:
                 continue
@@ -113,7 +164,11 @@ class Detector(api.BaseDetector):
                         is_problem, severity, msg = True, "WARNING", f"Vysoka teplota RPi desky ({numeric_val}C): {friendly_name}"
 
                 elif ("voltage" in entity_id or "napeti" in entity_id) and not any(x in entity_id or x in friendly_name_lower for x in ["battery", "bater"]):
-                    if numeric_val <= 0 or numeric_val < _t("voltage_min_v", 220.0):
+                    # Jen u senzoru, ktere skutecne meri sit. Napetove vetve
+                    # desky (nct6683 a spol.) ani vypnuty stroj hlasici 0.0 V
+                    # nejsou vypadek proudu.
+                    if self._is_mains_voltage(entity_id, numeric_val) and (
+                            numeric_val <= 0 or numeric_val < _t("voltage_min_v", 220.0)):
                         is_problem, severity, msg = True, "CRITICAL", f"Podpeti nebo vypadek v siti ({numeric_val} V): {friendly_name}"
 
                 elif "current" in entity_id or "proud" in entity_id:
@@ -144,6 +199,8 @@ class Detector(api.BaseDetector):
         # Kompletní stav → co se nenahlásilo, pominulo.
         api.reconcile_issues(["HA_ALERT", "HA_UPDATE", "HA_BACKUP_FAIL"],
                              reported_keys, host="HomeAssistant")
+
+        self._save_volt_seen()
 
         if telemetry_data:
             api.save_telemetry_snapshot("HomeAssistant", telemetry_data)
