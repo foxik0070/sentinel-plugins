@@ -11,6 +11,10 @@ class Detector(api.BaseDetector):
 
         active_server = None
         infra_label = api.get_infrastructure_label(file_path)
+        # capacity.log je plný sweep na server, takže mount, který v dávce chybí,
+        # už přes práh není. Sbíráme po serverech — reconcile pak proběhne jen
+        # pro ty, které v téhle dávce opravdu byly.
+        reported_by_server: dict[str, set] = {}
 
         for line in lines:
             line = line.strip()
@@ -19,6 +23,10 @@ class Detector(api.BaseDetector):
 
             if line.startswith("SERVER:"):
                 active_server = line.split("SERVER:")[1].strip()
+                # Server bez řádků pod hlavičkou = sweep proběhl a nic není
+                # přes práh. Bez téhle registrace se reconcile pro něj nespustí
+                # a starý DISK_FULL visí, i když místo dávno je.
+                reported_by_server.setdefault(active_server, set())
                 continue
                 
             # Ignorovani formatovacich oddelovacu z noveho orchestratoru
@@ -35,7 +43,8 @@ class Detector(api.BaseDetector):
                 usage_pct = parts[-2]
                 
                 key = f"DISK_FULL|{active_server}|{mount_point}"
-                
+                reported_by_server.setdefault(active_server, set()).add(key)
+
                 # Vzdy reportovat, jadro updatuje cas a deduplikuje
                 api.report_problem(key, {
                     "status": "active",
@@ -49,3 +58,7 @@ class Detector(api.BaseDetector):
                 })
             except (IndexError, ValueError):
                 continue
+
+        # Mounty, které se v tomhle sweepu neozvaly, klesly pod práh.
+        for server, keys in reported_by_server.items():
+            api.reconcile_issues("DISK_FULL", keys, host=server)

@@ -1,32 +1,22 @@
 # Sentinel Plugins
 
-> ## ⚠️ Archiv
->
-> **Tenhle repozitář se dál nevyvíjí.** Detektory žijí v hlavním repozitáři
-> Sentinelu, v adresáři [`sentinel/plugins/`](https://github.com/foxik0070/Sentinel/tree/main/sentinel/plugins),
-> a vydávají se spolu s ním — jsou součástí balíčků `sentinel_*.deb` a `.rpm`.
->
-> Obsah tohoto repozitáře odpovídá stavu ze srpna 2026 a **chybí v něm
-> `base.py`**, bez kterého se detektory v novějším Sentinelu nenačtou.
-> Nepoužívejte ho jako zdroj. Zůstává zachovaný jen kvůli historii.
->
-> Detektory specifické pro HPC prostředí mají vlastní repozitář
-> (`sentinel-plugins-it4i`) a ten se dál používá.
-
 ![sentinel-plugins](sentinel_plugins.png)
 ![License: MIT](https://img.shields.io/badge/License-MIT-cyan.svg)
-![Python](https://img.shields.io/badge/python-3.13%2B-blue)
-![Detectors](https://img.shields.io/badge/detectors-11-blue)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Detectors](https://img.shields.io/badge/detectors-10-blue)
 
-**Detector plugins for Sentinel Commander.**
+**Volitelné detektory pro [Sentinel Commander](https://github.com/foxik0070/Sentinel).**
 
-This repository contains the 11 detector plugins that run inside [Sentinel Commander](https://github.com/foxik0070/Sentinel). Each plugin watches a specific log file or data source, parses events, and feeds them into the Sentinel issue pipeline. Plugins are hot-reloaded — no restart required when adding or updating.
+Sentinel si v sobě nechává jen základ — `base.py` (rozhraní `BaseDetector`)
+a dva detektory, bez kterých nedává smysl: `system_detector` a
+`services_detector`. Všechno ostatní žije tady a nasazuje se **balíčkem**
+`sentinel-plugins` (`.deb` / `.rpm`), nezávisle na vydání Sentinelu.
 
 ---
 
-## Detectors
+## Detektory
 
-| Plugin | Input | Severity | AI | Auto-heal |
+| Plugin | Vstup | Závažnost | AI | Samoopravné |
 |---|---|---|---|---|
 | `audit_detector` | `audit.log` | WARN / CRIT | — | — |
 | `availability_detector` | `availability.log` | CRITICAL | — | ✓ STATUS:UP |
@@ -34,70 +24,110 @@ This repository contains the 11 detector plugins that run inside [Sentinel Comma
 | `ha_detector` | Home Assistant JSON | TELEMETRY / CRIT | — | — |
 | `port_detector` | `ports.log` (`ss -tuln`) | WARN / CRIT | — | — |
 | `security_detector` | `security.log` (fail2ban) | WARNING | — | — |
-| `services_detector` | `services.log` | CRITICAL | — | — |
 | `storage_detector` | `storage.log` (ZFS) | CRITICAL | — | ✓ STATUS:HEALTHY |
-| `system_detector` | `system.log` (kernel) | CRITICAL | — | — |
 | `temperature_detector` | `temperature.log` | WARN / CRIT | — | ✓ < WARN_LIMIT |
-| `detector_universal_security` | `auth.log` / `syslog` | INFO–CRIT | ✓ AI enqueue | — |
+| `detector_universal_security` | `auth.log` / `syslog` | INFO–CRIT | ✓ AI fronta | — |
+| `detector_windows` | Windows event log | WARN / CRIT | — | — |
+
+V Sentinelu zůstávají `system_detector` (jádro) a `services_detector` (systemd).
 
 ---
 
-## Usage
+## Instalace
 
-### With Sentinel Commander
-
-Plugins are loaded automatically from the directory configured in `config.yaml`:
-
-```yaml
-plugin_dir: /opt/Sentinel/sentinel/plugins
-detectors:
-  - audit_detector
-  - capacity_detector
-  - security_detector
-  - detector_universal_security
-  # add/remove as needed
-```
-
-Copy the plugins you need:
+### Balíčkem (doporučeno)
 
 ```bash
-git clone https://github.com/foxik0070/sentinel-plugins /tmp/sentinel-plugins
-cp /tmp/sentinel-plugins/*.py /opt/Sentinel/sentinel/plugins/
-# Sentinel hot-reloads them automatically
+# Debian / Ubuntu
+apt install sentinel-plugins
+# RHEL a odvozené
+dnf install sentinel-plugins
 ```
 
-### Writing a Custom Detector
+Detektory se nainstalují do `/opt/sentinel-plugins`. Sentinel je tam najde,
+protože `plugin_dir` smí být **seznam adresářů**:
 
-All detectors extend `BaseDetector` from `base.py`:
-
-```python
-from base import BaseDetector
-
-class MyDetector(BaseDetector):
-    def detect(self, line: str) -> dict | None:
-        if "ERROR" in line:
-            return {
-                "severity": "HIGH",
-                "category": "INFRA",
-                "message": f"Error detected: {line.strip()}",
-            }
-        return None
+```yaml
+plugin_dir:
+  - /opt/Sentinel/sentinel/plugins   # základ, který veze Sentinel
+  - /opt/sentinel-plugins            # tenhle balíček
+detectors:
+  - plugin: port_detector
+    match_pattern: ports.log
+  - plugin: security_detector
+    match_pattern: security.log
 ```
 
-Register it in `config.yaml` under `detectors:` and Sentinel picks it up on the next reload.
+Hledá se v uvedeném pořadí, takže při shodě jmen vyhraje adresář uvedený dřív.
+Jediný řetězec místo seznamu funguje jako dřív.
+
+### Ručně
+
+```bash
+git clone https://github.com/foxik0070/sentinel-plugins /opt/sentinel-plugins
+```
+
+Detektory se načítají při startu a při hot-reloadu, restart není potřeba.
 
 ---
 
-## Architecture
+## Vlastní detektor
+
+Detektor je soubor `<jméno>.py` s třídou `Detector`, která dědí
+`api.BaseDetector`. Plugin manager ho načte podle jména z `config.yaml`
+a volá `process()` s dávkou nových řádků:
+
+```python
+from datetime import datetime, timezone
+from sentinel import api
+
+
+class Detector(api.BaseDetector):
+    def __init__(self, name, config_params=None):
+        super().__init__(name, config_params)
+
+    def process(self, lines, file_path):
+        if not file_path.endswith("muj.log"):
+            return
+        host = "server1"
+        for line in lines:
+            key = f"MUJ_PROBLEM|{host}"
+            if "ERROR" in line:
+                api.report_problem(key, {
+                    "status": "active",
+                    "last_line": line.strip(),
+                    "channel_type": "infra",
+                    "host": host,
+                    "cluster": api.get_infrastructure_label(file_path),
+                    "log_file": file_path,
+                    "last_seen": datetime.now(timezone.utc).isoformat(),
+                    "missing_count": 0,
+                })
+            else:
+                api.mark_resolved(key)
+```
+
+`report_problem(key, data)` bere **slovník**, ne pojmenované argumenty. Klíč je
+identita problému — stejný klíč podruhé znamená tentýž problém, ne nový.
+`mark_resolved(key)` je druhá polovina kontraktu: bez ní issue visí i po tom,
+co problém pominul. Nejkratší hotový příklad je `audit_detector.py`.
+
+Pokud detektor v `config.yaml` je, ale jeho soubor se nenajde, Sentinel na to
+**upozorní** vlastním issue (`SENTINEL|detectors_missing`, critical). Tiché
+nenačtení už jednou stálo dva dny falešného „všechno OK".
+
+---
+
+## Architektura
 
 ```
-Log file (inotify tail)
+log soubor (tail)
     │
     ▼
-plugin_manager.py
-    │  calls detect(line) for each enabled plugin
+plugin_manager.py  — hledá <jméno>.py v adresářích z plugin_dir
+    │
     ▼
-*_detector.py → returns issue dict or None
+Detector.process(lines, file_path)
     │
     ▼
 state.save_problem() → SQLite → Socket.IO → notifier.py
@@ -105,18 +135,15 @@ state.save_problem() → SQLite → Socket.IO → notifier.py
 
 ---
 
-## Documentation
+## Související
 
-Full documentation: **https://sentinel-docs.example.com**
+- [Sentinel Commander](https://github.com/foxik0070/Sentinel) — načítá a spouští tyhle detektory
+- `sentinel-plugins-it4i` — detektory pro HPC prostředí, vlastní repozitář
 
----
-
-## Related
-
-- [Sentinel Commander](https://github.com/foxik0070/Sentinel) — loads and runs these plugins
+Dokumentace: **https://sentinel-docs.foxik-iot.cz/**
 
 ---
 
-## License
+## Licence
 
-MIT — see [LICENSE](LICENSE). Copyright © 2026 foxik0070.
+MIT — viz [LICENSE](LICENSE). Copyright © 2026 foxik0070.

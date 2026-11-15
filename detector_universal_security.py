@@ -30,7 +30,7 @@ class Detector(api.BaseDetector):
             # Zachytí: apt-get install, dnf install, yum install, atd.
             elif "COMMAND=" in l and ("install" in l or "remove" in l or "purge" in l) and "root" in l:
                 problem_found = True
-                severity = "INFO" # Nebo WARNING, pokud je to v HPC zakázáno
+                severity = "INFO" # Nebo WARNING, pokud je to v prostředí zakázáno
                 event_type = "System Software Modification"
                 
             elif "POSSIBLE BREAK-IN ATTEMPT" in l:
