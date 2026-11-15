@@ -1,4 +1,18 @@
 # Sentinel Plugins
+
+> ## ⚠️ Archiv
+>
+> **Tenhle repozitář se dál nevyvíjí.** Detektory žijí v hlavním repozitáři
+> Sentinelu, v adresáři [`sentinel/plugins/`](https://github.com/foxik0070/Sentinel/tree/main/sentinel/plugins),
+> a vydávají se spolu s ním — jsou součástí balíčků `sentinel_*.deb` a `.rpm`.
+>
+> Obsah tohoto repozitáře odpovídá stavu ze srpna 2026 a **chybí v něm
+> `base.py`**, bez kterého se detektory v novějším Sentinelu nenačtou.
+> Nepoužívejte ho jako zdroj. Zůstává zachovaný jen kvůli historii.
+>
+> Detektory specifické pro HPC prostředí mají vlastní repozitář
+> (`sentinel-plugins-it4i`) a ten se dál používá.
+
 ![sentinel-plugins](sentinel_plugins.png)
 ![License: MIT](https://img.shields.io/badge/License-MIT-cyan.svg)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
